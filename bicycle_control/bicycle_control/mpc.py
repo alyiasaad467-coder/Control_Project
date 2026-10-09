@@ -81,4 +81,114 @@ class KinematicBicycleMPC:
         #      throttle_cmd = accel_cmd / self.k_a
         #    - Return tuple: (delta_cmd, throttle_cmd).
         # ======================================================================
-        pass
+
+        N = min(self.N, len(ref_trajectory))
+
+        if N < 2:
+            return 0.0, 0.0
+
+        ref = np.asarray(ref_trajectory[:N], dtype=float)
+        x0 = np.asarray(x0, dtype=float)
+
+        bounds = []
+        for _ in range(N):
+            bounds.append(
+                (-self.max_steer_rad, self.max_steer_rad)
+            )
+            bounds.append(
+                (-self.k_a, self.k_a)
+            )
+
+        def objective(u):
+            state = x0.copy()
+            prev_delta = current_steer
+            cost = 0.0
+
+            for k in range(N):
+                delta = u[2 * k]
+                accel = u[2 * k + 1]
+
+                x = state[0]
+                y = state[1]
+                yaw = state[2]
+                v = state[3]
+
+                x_ref = ref[k, 0]
+                y_ref = ref[k, 1]
+                yaw_ref = ref[k, 2]
+                v_ref = ref[k, 3]
+
+                dx = x - x_ref
+                dy = y - y_ref
+
+                c = math.cos(yaw_ref)
+                s = math.sin(yaw_ref)
+
+                cte = -s * dx + c * dy
+
+                yaw_error = (yaw - yaw_ref + math.pi) % (2.0 * math.pi) - math.pi
+                speed_error = v - v_ref
+
+                cost += self.w_lat * cte ** 2
+                cost += self.w_yaw * yaw_error ** 2
+                cost += self.w_v * speed_error ** 2
+                cost += self.w_steer * delta ** 2
+                cost += self.w_dsteer * (delta - prev_delta) ** 2
+                cost += self.w_accel * accel ** 2
+
+                state[0] = x + v * math.cos(yaw) * self.dt
+                state[1] = y + v * math.sin(yaw) * self.dt
+                state[2] = yaw + (v / self.L) * math.tan(delta) * self.dt
+                state[3] = max(0.0, v + accel * self.dt)
+
+                state[2] = (
+                    state[2] + math.pi
+                ) % (2.0 * math.pi) - math.pi
+
+                prev_delta = delta
+
+            return float(cost)
+
+        if len(self.last_u) >= 2 * N:
+            u_init = self.last_u[:2 * N].copy()
+
+            if N > 1:
+                u_init[:-2] = u_init[2:]
+                u_init[-2:] = u_init[-4:-2]
+        else:
+            u_init = np.zeros(2 * N)
+
+        u_init = np.clip(
+            u_init,
+            [b[0] for b in bounds],
+            [b[1] for b in bounds]
+        )
+
+        result = minimize(
+            objective,
+            u_init,
+            bounds=bounds,
+            method='SLSQP',
+            options={'maxiter': 25, 'ftol': 1e-3}
+        )
+
+        if result.success:
+            optimal_u = result.x
+        else:
+            optimal_u = u_init
+
+        self.last_u = np.zeros(2 * self.N)
+        self.last_u[:2 * N] = optimal_u
+
+        delta_cmd = float(optimal_u[0])
+        accel_cmd = float(optimal_u[1])
+
+        throttle_cmd = float(
+            np.clip(
+                accel_cmd / self.k_a,
+                -1.0,
+                1.0
+            )
+        )
+
+        return delta_cmd, throttle_cmd
