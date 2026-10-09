@@ -169,6 +169,52 @@ $$\tan\delta_{inner} = \frac{L}{R - \frac{W}{2}}, \quad \tan\delta_{outer} = \fr
 - [Four-Wheel AMR Reference Implementation](https://github.com/abubakar-mughal97/four_wheel_amr) — 4-wheel mobile robot package with Ackermann steering.
 
 ---
+##  Theoretical Analysis
+
+### 1. Ackermann Steering Kinematics
+
+Ackermann steering geometry allows a vehicle to turn smoothly by making the inner front wheel steer at a larger angle than the outer front wheel. This helps reduce tire slipping during a turn.
+
+In the Bicycle Model, the two front wheels are represented by one equivalent front wheel, and the two rear wheels are represented by one equivalent rear wheel. The vehicle motion is described using the following equations:
+
+$$
+\dot{x}=v\cos(\theta)
+$$
+
+$$
+\dot{y}=v\sin(\theta)
+$$
+
+$$
+\dot{\theta}=\frac{v}{L}\tan(\delta)
+$$
+
+where \(x\) and \(y\) represent the vehicle position, \(v\) is the vehicle speed, \(\theta\) is the heading angle, \(L\) is the wheelbase, and \(\delta\) is the steering angle.
+
+The equations show that the steering angle and vehicle speed determine how quickly the vehicle changes its heading. This model simplifies vehicle motion and is useful for designing controllers such as Pure Pursuit, Lateral PID, and MPC.
+
+### 2. 2D vs. 3D Simulation
+
+A 2D simulation represents the vehicle position and motion on a flat plane. It focuses on the vehicle's \(x\) and \(y\) positions, heading angle, speed, and steering behavior. It is computationally efficient and useful for testing path-following and control algorithms.
+
+A 3D simulation represents the vehicle and its environment in three dimensions. It can include more realistic vehicle geometry, suspension, body movement, and environmental effects, depending on the simulator.
+
+The main advantage of 2D simulation is its simplicity and low computational cost, which make it suitable for developing and comparing controllers. A 3D simulation can provide a more realistic representation of vehicle behavior, but it usually requires more computational resources and a more complex model.
+
+For this project, the bicycle model provides a simplified way to study vehicle dynamics and evaluate the controllers before considering more complex simulations.
+
+### 3. Deterministic MPC vs. Sampling-Based Nav2 MPPI
+
+Model Predictive Control (MPC) predicts the future vehicle motion using a mathematical model. It calculates a sequence of control inputs, such as steering and acceleration, and selects the sequence that minimizes a cost function. The cost function can penalize path-tracking errors, heading errors, speed errors, and excessive control changes.
+
+MPC typically uses an optimization algorithm to find the best control sequence. In a deterministic implementation, the optimization follows a fixed procedure for a given initial state and configuration, although the final result can depend on the optimizer and its settings.
+
+Model Predictive Path Integral (MPPI), used in Nav2, is a sampling-based controller. It generates multiple possible control sequences, simulates their predicted outcomes, and uses their costs to calculate an improved control sequence. It repeats this process to select actions that are expected to produce better performance.
+
+The main difference is that conventional deterministic MPC commonly relies on numerical optimization, while MPPI explores possible control sequences through sampling. MPC can be effective when a suitable model and optimization problem are available. MPPI can handle complex cost functions and nonlinear systems, but its performance depends on sampling parameters and computational resources.
+
+Both methods use predictions of future motion to improve control. Their performance depends on the model accuracy, tuning parameters, computational cost, and the driving conditions.
+
 
 ### 2. Modern 3D Simulation Environments (Gazebo & MVSim)
 *Bridge the gap between 2D planar kinematics and full 3D physics engines with tire friction dynamics.*
