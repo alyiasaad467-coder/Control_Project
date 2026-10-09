@@ -253,7 +253,41 @@ class LapAnalyzer(Node):
         #    Clear per-lap history buffers (self.lap_ctes, self.lap_heading_errors,
         #    self.lap_speeds) so the next lap starts fresh.
         # ======================================================================
-        pass
+
+        if self.lap_ctes:
+            mean_cte = float(np.mean(self.lap_ctes))
+            max_cte = float(np.max(self.lap_ctes))
+            rms_cte = float(np.sqrt(np.mean(np.square(self.lap_ctes))))
+        else:
+            mean_cte = 0.0
+            max_cte = 0.0
+            rms_cte = 0.0
+
+        if self.lap_speeds:
+            mean_speed = float(np.mean(self.lap_speeds))
+            max_speed = float(np.max(self.lap_speeds))
+        else:
+            mean_speed = 0.0
+            max_speed = 0.0
+
+        self.get_logger().info(
+            '\n'
+            '========== LAP COMPLETE ==========\n'
+            f'Lap: {self.lap_count}\n'
+            f'Lap Time: {lap_duration:.2f} s\n'
+            f'Best Lap: {self.best_lap_time:.2f} s\n'
+            f'Mean CTE: {mean_cte:.3f} m\n'
+            f'RMS CTE: {rms_cte:.3f} m\n'
+            f'Max CTE: {max_cte:.3f} m\n'
+            f'Mean Speed: {mean_speed:.2f} m/s\n'
+            f'Max Speed: {max_speed:.2f} m/s\n'
+            f'Total Distance: {self.total_distance:.2f} m\n'
+            '=================================='
+        )
+
+        self.lap_ctes.clear()
+        self.lap_heading_errors.clear()
+        self.lap_speeds.clear()
 
     def publish_telemetry(self):
         """Periodically publishes numerical telemetry and RViz visual markers at 10 Hz."""
@@ -275,8 +309,52 @@ class LapAnalyzer(Node):
         # 3. Visual Telemetry (RViz):
         #    Pass the telemetry dict to self.publish_rviz_markers(telemetry).
         # ======================================================================
-        # Baseline start-gate visualization hook
-        self.publish_rviz_markers()
+
+        cte_msg = Float32()
+        cte_msg.data = float(self.current_cte)
+        self.cte_pub.publish(cte_msg)
+
+        speed_msg = Float32()
+        speed_msg.data = float(self.current_speed)
+        self.speed_pub.publish(speed_msg)
+
+        heading_msg = Float32()
+        heading_msg.data = float(math.degrees(self.current_heading_err))
+        self.heading_err_pub.publish(heading_msg)
+
+        lap_time_msg = Float32()
+        lap_time_msg.data = float(self.current_lap_time)
+        self.lap_time_pub.publish(lap_time_msg)
+
+        if self.lap_ctes:
+            rms_cte = float(np.sqrt(np.mean(np.square(self.lap_ctes))))
+        else:
+            rms_cte = 0.0
+
+        telemetry = {
+            'lap': self.lap_count,
+            'current_lap_time': float(self.current_lap_time),
+            'last_lap_time': (
+                float(self.last_lap_time)
+                if self.last_lap_time is not None
+                else None
+            ),
+            'best_lap_time': (
+                float(self.best_lap_time)
+                if self.best_lap_time is not None
+                else None
+            ),
+            'speed': float(self.current_speed),
+            'current_cte': float(self.current_cte),
+            'rms_cte': rms_cte,
+            'heading_err_deg': float(math.degrees(self.current_heading_err))
+        }
+
+        metrics_msg = String()
+        metrics_msg.data = json.dumps(telemetry)
+        self.metrics_pub.publish(metrics_msg)
+
+        self.publish_rviz_markers(telemetry)
 
     def publish_rviz_markers(self, telemetry=None):
         """Renders start gate, error whisker, and on-screen HUD text in RViz."""
@@ -328,8 +406,86 @@ class LapAnalyzer(Node):
         #  - Controller Lookahead Preview: Render a Marker.SPHERE at target waypoint.
         #  - Vehicle Breadcrumbs / Trajectory History: Render a Marker.POINTS trail
         #    color-coded by speed or CTE magnitude.
-        #  - Lateral Acceleration Gauge: Render a vertical bar showing cornering load.
         # ======================================================================
+
+        if self.last_xy is not None:
+            whisker = Marker()
+            whisker.header.frame_id = 'map'
+            whisker.header.stamp = now
+            whisker.ns = 'cte'
+            whisker.id = 1
+            whisker.type = Marker.LINE_STRIP
+            whisker.action = Marker.ADD
+            whisker.pose.orientation.w = 1.0
+            whisker.scale.x = 0.04
+
+            p1 = Point()
+            p1.x = self.last_xy[0]
+            p1.y = self.last_xy[1]
+            p1.z = 0.15
+
+            p2 = Point()
+            p2.x = self.proj_xy[0]
+            p2.y = self.proj_xy[1]
+            p2.z = 0.15
+
+            whisker.points = [p1, p2]
+
+            if abs(self.current_cte) < 0.2:
+                whisker.color.r = 0.1
+                whisker.color.g = 1.0
+                whisker.color.b = 0.1
+            elif abs(self.current_cte) < 0.5:
+                whisker.color.r = 1.0
+                whisker.color.g = 1.0
+                whisker.color.b = 0.1
+            else:
+                whisker.color.r = 1.0
+                whisker.color.g = 0.1
+                whisker.color.b = 0.1
+
+            whisker.color.a = 1.0
+            ma.markers.append(whisker)
+
+        hud = Marker()
+        hud.header.frame_id = 'map'
+        hud.header.stamp = now
+        hud.ns = 'telemetry_hud'
+        hud.id = 2
+        hud.type = Marker.TEXT_VIEW_FACING
+        hud.action = Marker.ADD
+
+        if self.path_points:
+            hud.pose.position.x = self.path_points[0][0]
+            hud.pose.position.y = self.path_points[0][1]
+            hud.pose.position.z = 2.0
+        else:
+            hud.pose.position.x = 0.0
+            hud.pose.position.y = 0.0
+            hud.pose.position.z = 2.0
+
+        hud.pose.orientation.w = 1.0
+        hud.scale.z = 0.6
+        hud.color.r = 1.0
+        hud.color.g = 1.0
+        hud.color.b = 1.0
+        hud.color.a = 1.0
+
+        best_lap = (
+            f'{self.best_lap_time:.2f}'
+            if self.best_lap_time is not None
+            else '--'
+        )
+
+        hud.text = (
+            f'Lap: {self.lap_count}\n'
+            f'Lap Time: {self.current_lap_time:.2f} s\n'
+            f'Speed: {self.current_speed:.2f} m/s\n'
+            f'CTE: {self.current_cte:.2f} m\n'
+            f'Best Lap: {best_lap} s'
+        )
+
+        ma.markers.append(hud)
 
         self.viz_pub.publish(ma)
 
